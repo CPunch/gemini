@@ -1,3 +1,8 @@
+/* gemini.go
+extremely basic gemini server implementing the gemini protocol as described by:
+	gemini://gemini.circumlunar.space/docs/specification.gmi
+*/
+
 package gemini
 
 import (
