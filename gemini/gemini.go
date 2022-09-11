@@ -112,8 +112,21 @@ func (peer *geminiPeer) readRequest() {
 
 	// grab parameter (if exists)
 	if i := strings.Index(peer.path, "?"); i != -1 {
-		peer.param = url.QueryEscape(peer.path[i+1:])
-		peer.path = peer.path[:i]
+		// decode param
+		param, err := url.QueryUnescape(peer.path[i+1:])
+		if err != nil {
+			panic("failed to decode param!")
+		}
+
+		// decode path
+		path, err := url.PathUnescape(peer.path[:i])
+		if err != nil {
+			panic("failed to decode path!")
+		}
+
+		// set
+		peer.param = param
+		peer.path = path
 	}
 }
 
