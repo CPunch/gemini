@@ -28,41 +28,41 @@ const (
 	StatusClientCertRequired = 60
 )
 
-type geminiPeer struct {
-	server *geminiServer
+type GeminiPeer struct {
+	server *GeminiServer
 	sock   net.Conn
+	rawURL string
 	path   string
 	param  string
 	uri    string
 	params map[string]string
 }
 
-type geminiServer struct {
+type GeminiServer struct {
 	listenSock net.Listener
 }
 
 /* ======================================[[ geminiPeer ]]======================================= */
 
-func (server *geminiServer) newPeer(sock net.Conn) *geminiPeer {
+func (server *GeminiServer) newPeer(sock net.Conn) *GeminiPeer {
 	// status '20' is a SUCCESS status
-	return &geminiPeer{server: server, sock: sock}
+	return &GeminiPeer{server: server, sock: sock}
 }
 
-func (peer *geminiPeer) Kill() {
+func (peer *GeminiPeer) Kill() {
 	// catch any panics
 	if r := recover(); r != nil {
-		log.Printf("peer[%p] %s", peer, r)
+		log.Printf("%s [ERR]: %s", peer.GetAddr(), r)
 	}
 
 	peer.sock.Close()
-	log.Printf("peer[%p] killed", peer)
 }
 
-func (peer *geminiPeer) Read(p []byte) (int, error) {
+func (peer *GeminiPeer) Read(p []byte) (int, error) {
 	return peer.sock.Read(p)
 }
 
-func (peer *geminiPeer) Write(p []byte) {
+func (peer *GeminiPeer) Write(p []byte) {
 	written := 0
 
 	for written < len(p) {
@@ -80,7 +80,11 @@ func (peer *geminiPeer) Write(p []byte) {
 	}
 }
 
-func (peer *geminiPeer) readRequest() {
+func (peer *GeminiPeer) GetAddr() string {
+	return peer.sock.LocalAddr().String()
+}
+
+func (peer *GeminiPeer) readRequest() {
 	buf := make([]byte, 1026)
 	length := 0
 
@@ -99,15 +103,15 @@ func (peer *geminiPeer) readRequest() {
 	}
 
 	// -2 to remove the <CR><LF>
-	rawURL := string(buf[:length-2])
+	peer.rawURL = string(buf[:length-2])
 
 	// clean url, parse out the uri
-	if i := strings.Index(rawURL, "://"); i != -1 {
-		peer.uri = rawURL[:i+3]  // eg. "gemini://"
-		peer.path = rawURL[i+3:] // eg. "localhost/path/index.gmi"
+	if i := strings.Index(peer.rawURL, "://"); i != -1 {
+		peer.uri = peer.rawURL[:i+3]  // eg. "gemini://"
+		peer.path = peer.rawURL[i+3:] // eg. "localhost/path/index.gmi"
 	} else {
 		peer.uri = "gemini://"
-		peer.path = rawURL
+		peer.path = peer.rawURL
 	}
 
 	// grab parameter (if exists)
@@ -130,14 +134,20 @@ func (peer *geminiPeer) readRequest() {
 	}
 }
 
-func (peer *geminiPeer) sendHeader(status int, meta string) {
+func (peer *GeminiPeer) sendHeader(status int, meta string) {
 	// <STATUS><SPACE><META><CR><LF>
 	peer.Write([]byte(fmt.Sprintf("%d %s\r\n", status, meta)))
+
+	log.Printf("%s <- STATUS %d '%s'", peer.GetAddr(), status, meta)
+}
+
+func (peer *GeminiPeer) SendError(meta string) {
+	peer.sendHeader(StatusTemporaryFailure, meta)
 }
 
 /* =====================================[[ geminiServer ]]====================================== */
 
-func NewServer(port, certFile, keyFile string) (*geminiServer, error) {
+func NewServer(port, certFile, keyFile string) (*GeminiServer, error) {
 	// load key pair && create config
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
@@ -152,19 +162,21 @@ func NewServer(port, certFile, keyFile string) (*geminiServer, error) {
 		return nil, err
 	}
 
-	return &geminiServer{listenSock: l}, nil
+	return &GeminiServer{listenSock: l}, nil
 }
 
-func (server *geminiServer) handlePeer(peer *geminiPeer) {
-	log.Print("New peer!")
+func (server *GeminiServer) handlePeer(peer *GeminiPeer, handler func(peer *GeminiPeer)) {
 	defer peer.Kill()
-
 	peer.readRequest()
-	log.Printf("got request URL: %s%s", peer.uri, peer.path)
-	peer.sendHeader(StatusTemporaryFailure, "Stay tuned!")
+
+	// log our transaction
+	log.Printf("%s -> %s", peer.GetAddr(), peer.rawURL)
+
+	// call our user-defined peer handler
+	handler(peer)
 }
 
-func (server *geminiServer) Run() {
+func (server *GeminiServer) Run(peerRequest func(peer *GeminiPeer)) {
 	for {
 		// block and wait until tls socket connects
 		conn, err := server.listenSock.Accept()
@@ -175,6 +187,6 @@ func (server *geminiServer) Run() {
 
 		// create peer and handle connection
 		peer := server.newPeer(conn)
-		go server.handlePeer(peer)
+		go server.handlePeer(peer, peerRequest)
 	}
 }

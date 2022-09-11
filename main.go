@@ -7,6 +7,10 @@ import (
 	"github.com/CPunch/gem/gemini"
 )
 
+func handleRequest(peer *gemini.GeminiPeer) {
+	peer.SendError("Stay tuned!")
+}
+
 func main() {
 	// get command line flags
 	port := flag.String("port", "1965", "listening port")
@@ -20,5 +24,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	server.Run()
+	server.Run(handleRequest)
 }
