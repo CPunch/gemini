@@ -11,6 +11,7 @@ type geminiPeer struct {
 	server *geminiServer
 	sock   net.Conn
 	url    string
+	params map[string]string
 }
 
 type geminiServer struct {
@@ -25,18 +26,38 @@ func (server *geminiServer) newPeer(sock net.Conn) *geminiPeer {
 }
 
 func (peer *geminiPeer) Kill() {
+	// catch any panics
+	if r := recover(); r != nil {
+		log.Printf("peer[%p] %s", peer, r)
+	}
+
 	peer.sock.Close()
+	log.Printf("peer[%p] killed", peer)
 }
 
 func (peer *geminiPeer) Read(p []byte) (int, error) {
 	return peer.sock.Read(p)
 }
 
-func (peer *geminiPeer) Write(p []byte) (int, error) {
-	return peer.sock.Write(p)
+func (peer *geminiPeer) Write(p []byte) {
+	written := 0
+
+	for written < len(p) {
+		sz, err := peer.sock.Write(p[written:])
+		if err != nil {
+			panic(err)
+		}
+
+		// if sz is 0, it means the socket has closed
+		if sz == 0 {
+			break
+		}
+
+		written += sz
+	}
 }
 
-func (peer *geminiPeer) readRequest() error {
+func (peer *geminiPeer) readRequest() {
 	buf := make([]byte, 1026)
 	length := 0
 
@@ -44,7 +65,7 @@ func (peer *geminiPeer) readRequest() error {
 	for length < 1026 {
 		sz, err := peer.Read(buf)
 		if err != nil {
-			return err
+			panic(err)
 		}
 
 		tmp := string(buf)
@@ -56,13 +77,14 @@ func (peer *geminiPeer) readRequest() error {
 			break
 		}
 	}
-
-	return nil
 }
 
 func (peer *geminiPeer) sendHeader(status int, meta string) {
+	// <STATUS><SPACE>
 	peer.Write([]byte(fmt.Sprintf("%d ", status)))
+	// <META>
 	peer.Write([]byte(meta))
+	// <CR><LF>
 	peer.Write([]byte{'\r', '\n'})
 }
 
@@ -90,10 +112,7 @@ func (server *geminiServer) handlePeer(peer *geminiPeer) {
 	log.Print("New peer!")
 	defer peer.Kill()
 
-	if err := peer.readRequest(); err != nil {
-		log.Print(err)
-	}
-
+	peer.readRequest()
 	log.Printf("got request URL: %s", peer.url)
 	peer.sendHeader(40, "Stay tuned!")
 }
