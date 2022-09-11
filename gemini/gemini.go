@@ -5,12 +5,30 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/url"
+	"strings"
+)
+
+const (
+	StatusInput              = 10
+	StatusSuccess            = 20
+	StatusRedirect           = 30
+	StatusRedirectTemp       = 30
+	StatusRedirectPerm       = 31
+	StatusTemporaryFailure   = 40
+	StatusUnavailable        = 41
+	StatusPermanentFailure   = 50
+	StatusNotFound           = 51
+	StatusBadRequest         = 59
+	StatusClientCertRequired = 60
 )
 
 type geminiPeer struct {
 	server *geminiServer
 	sock   net.Conn
-	url    string
+	path   string
+	param  string
+	uri    string
 	params map[string]string
 }
 
@@ -50,7 +68,7 @@ func (peer *geminiPeer) Write(p []byte) {
 
 		// if sz is 0, it means the socket has closed
 		if sz == 0 {
-			break
+			panic("premature socket hangup!")
 		}
 
 		written += sz
@@ -63,34 +81,45 @@ func (peer *geminiPeer) readRequest() {
 
 	// requests absolute url cannot be longer than 1024 bytes + <CR><LF> (2 bytes)
 	for length < 1026 {
-		sz, err := peer.Read(buf)
+		sz, err := peer.Read(buf[length:])
 		if err != nil {
 			panic(err)
 		}
 
-		tmp := string(buf)
-		peer.url += tmp
 		length += sz
-
 		// requests end with a <CR><LF>
 		if length > 2 && buf[length-2] == '\r' && buf[length-1] == '\n' {
 			break
 		}
 	}
+
+	// -2 to remove the <CR><LF>
+	rawURL := string(buf[:length-2])
+
+	// clean url, parse out the uri
+	if i := strings.Index(rawURL, "://"); i != -1 {
+		peer.uri = rawURL[:i+3]  // eg. "gemini://"
+		peer.path = rawURL[i+3:] // eg. "localhost/path/index.gmi"
+	} else {
+		peer.uri = "gemini://"
+		peer.path = rawURL
+	}
+
+	// grab parameter (if exists)
+	if i := strings.Index(peer.path, "?"); i != -1 {
+		peer.param = url.QueryEscape(peer.path[i+1:])
+		peer.path = peer.path[:i]
+	}
 }
 
 func (peer *geminiPeer) sendHeader(status int, meta string) {
-	// <STATUS><SPACE>
-	peer.Write([]byte(fmt.Sprintf("%d ", status)))
-	// <META>
-	peer.Write([]byte(meta))
-	// <CR><LF>
-	peer.Write([]byte{'\r', '\n'})
+	// <STATUS><SPACE><META><CR><LF>
+	peer.Write([]byte(fmt.Sprintf("%d %s\r\n", status, meta)))
 }
 
 /* =====================================[[ geminiServer ]]====================================== */
 
-func NewServer(port string, certFile string, keyFile string) (*geminiServer, error) {
+func NewServer(port, certFile, keyFile string) (*geminiServer, error) {
 	// load key pair && create config
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
@@ -113,16 +142,17 @@ func (server *geminiServer) handlePeer(peer *geminiPeer) {
 	defer peer.Kill()
 
 	peer.readRequest()
-	log.Printf("got request URL: %s", peer.url)
-	peer.sendHeader(40, "Stay tuned!")
+	log.Printf("got request URL: %s%s", peer.uri, peer.path)
+	peer.sendHeader(StatusTemporaryFailure, "Stay tuned!")
 }
 
-func (server *geminiServer) Run() error {
+func (server *geminiServer) Run() {
 	for {
 		// block and wait until tls socket connects
 		conn, err := server.listenSock.Accept()
 		if err != nil {
-			return err
+			log.Print("Listener socket: ", err)
+			continue
 		}
 
 		// create peer and handle connection
