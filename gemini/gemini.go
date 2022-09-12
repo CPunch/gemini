@@ -145,6 +145,11 @@ func (peer *GeminiPeer) SendError(meta string) {
 	peer.sendHeader(StatusTemporaryFailure, meta)
 }
 
+func (peer *GeminiPeer) SendBody(body *GeminiBody) {
+	peer.sendHeader(StatusSuccess, "text/gemini")
+	peer.Write([]byte(body.buf))
+}
+
 /* =====================================[[ geminiServer ]]====================================== */
 
 func NewServer(port, certFile, keyFile string) (*GeminiServer, error) {
@@ -165,6 +170,10 @@ func NewServer(port, certFile, keyFile string) (*GeminiServer, error) {
 	return &GeminiServer{listenSock: l}, nil
 }
 
+// wrapper that reads the peer's request and dispatches the user-defined
+// request handler. also has some simple error recover for cleaning up the
+// socket. request handlers are encouraged to use panic() if there is a
+// non-peer related error. for request-related errors, use peer.SendError()
 func (server *GeminiServer) handlePeer(peer *GeminiPeer, handler func(peer *GeminiPeer)) {
 	defer peer.Kill()
 	peer.readRequest()

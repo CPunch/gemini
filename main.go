@@ -8,7 +8,9 @@ import (
 )
 
 func handleRequest(peer *gemini.GeminiPeer) {
-	peer.SendError("Stay tuned!")
+	body := gemini.NewBody()
+	body.AddHeader("Stay Tuned!")
+	peer.SendBody(body)
 }
 
 func main() {
