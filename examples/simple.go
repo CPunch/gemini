@@ -1,14 +1,3 @@
-# gemini
-
-A small go module to serve a Gemini server.
-
-## Installation
-
-`go get github.com/CPunch/gemini`
-
-## Example
-
-```go
 package main
 
 import (
@@ -39,5 +28,3 @@ func main() {
 
 	server.Run(handleRequest)
 }
-```
-> More examples can be found in the `/examples` directory
