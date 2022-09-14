@@ -45,7 +45,6 @@ type GeminiServer struct {
 /* ======================================[[ geminiPeer ]]======================================= */
 
 func (server *GeminiServer) newPeer(sock net.Conn) *GeminiPeer {
-	// status '20' is a SUCCESS status
 	return &GeminiPeer{server: server, sock: sock}
 }
 
