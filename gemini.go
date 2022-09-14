@@ -79,10 +79,6 @@ func (peer *GeminiPeer) Write(p []byte) {
 	}
 }
 
-func (peer *GeminiPeer) GetAddr() string {
-	return peer.sock.LocalAddr().String()
-}
-
 func (peer *GeminiPeer) readRequest() {
 	buf := make([]byte, 1026)
 	length := 0
@@ -140,6 +136,10 @@ func (peer *GeminiPeer) sendHeader(status int, meta string) {
 	log.Printf("%s <- STATUS %d '%s'", peer.GetAddr(), status, meta)
 }
 
+func (peer *GeminiPeer) GetAddr() string {
+	return peer.sock.RemoteAddr().String()
+}
+
 func (peer *GeminiPeer) SendError(meta string) {
 	peer.sendHeader(StatusTemporaryFailure, meta)
 }
@@ -157,11 +157,14 @@ func NewServer(port, certFile, keyFile string) (*GeminiServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	config := &tls.Config{Certificates: []tls.Certificate{cert}}
+	config := tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
 
 	// create listener socket
 	log.Printf("listening on port %s\n", port)
-	l, err := tls.Listen("tcp", ":"+port, config)
+	l, err := tls.Listen("tcp", ":"+port, &config)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +173,7 @@ func NewServer(port, certFile, keyFile string) (*GeminiServer, error) {
 }
 
 // wrapper that reads the peer's request and dispatches the user-defined
-// request handler. also has some simple error recover for cleaning up the
+// request handler. also has some simple error recovery for cleaning up the
 // socket. request handlers are encouraged to use panic() if there is a
 // non-peer related error. for request-related errors, use peer.SendError()
 func (server *GeminiServer) handlePeer(peer *GeminiPeer, handler func(peer *GeminiPeer)) {
