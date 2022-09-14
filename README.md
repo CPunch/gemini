@@ -1,3 +1,3 @@
-# gem
+# gemini
 
-gem is a textboard for the gemini protocol. Like a forum, but exclusively text based.
+a small go module to serve a Gemini server
