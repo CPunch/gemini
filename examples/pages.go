@@ -1,14 +1,3 @@
-# gemini
-
-A small go module to serve a Gemini server.
-
-## Installation
-
-`go get github.com/CPunch/gemini`
-
-## Example
-
-```go
 package main
 
 import (
@@ -49,5 +38,3 @@ func main() {
 	pHndler.AddHandler("/hi", handleHi)
 	server.Run(pHndler.HandlePeer)
 }
-```
-> More examples can be found in the `/examples` directory
