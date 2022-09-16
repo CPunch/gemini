@@ -29,13 +29,14 @@ const (
 )
 
 type GeminiPeer struct {
-	server *GeminiServer
-	sock   net.Conn
-	rawURL string
-	path   string
-	param  string
-	uri    string
-	params map[string]string
+	server   *GeminiServer
+	sock     net.Conn
+	rawURL   string
+	hostname string
+	path     string
+	param    string
+	uri      string
+	params   map[string]string
 }
 
 type GeminiServer struct {
@@ -107,6 +108,15 @@ func (peer *GeminiPeer) readRequest() {
 	} else {
 		peer.uri = "gemini://"
 		peer.path = peer.rawURL
+	}
+
+	// split path into hostname and path
+	if i := strings.Index(peer.path, "/"); i != -1 {
+		peer.hostname = peer.path[:i]
+		peer.path = peer.path[i:]
+	} else {
+		peer.hostname = peer.path
+		peer.path = "/"
 	}
 
 	// grab parameter (if exists)
