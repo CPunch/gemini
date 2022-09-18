@@ -120,15 +120,15 @@ func (peer *GeminiPeer) readRequest() {
 	}
 
 	// grab parameter (if exists)
-	if i := strings.Index(peer.path, "?"); i != -1 {
+	if i := strings.Index(peer.rawURL, "?"); i != -1 {
 		// decode param
-		param, err := url.QueryUnescape(peer.path[i+1:])
+		param, err := url.QueryUnescape(peer.rawURL[i+1:])
 		if err != nil {
 			panic("failed to decode param!")
 		}
 
 		// decode path
-		path, err := url.PathUnescape(peer.path[:i])
+		path, err := url.PathUnescape(peer.rawURL[:i])
 		if err != nil {
 			panic("failed to decode path!")
 		}
@@ -150,6 +150,17 @@ func (peer *GeminiPeer) GetAddr() string {
 	return peer.sock.RemoteAddr().String()
 }
 
+// returns (param, isParam). if isParam is false, the peer did not post any parameter data
+func (peer *GeminiPeer) GetParam() (string, bool) {
+	return peer.param, strings.Compare(peer.param, "") != 0
+}
+
+// meta is the text that is prompted for the user
+func (peer *GeminiPeer) SendInput(meta string) {
+	peer.sendHeader(StatusInput, meta)
+}
+
+// meta is the text that is reported to the user
 func (peer *GeminiPeer) SendError(meta string) {
 	peer.sendHeader(StatusTemporaryFailure, meta)
 }
