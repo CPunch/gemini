@@ -1,6 +1,6 @@
 # gemini
 
-A small go module to serve a Gemini server.
+A small go module to serve Gemini servers, create requests, etc.
 
 ## Installation
 
@@ -12,42 +12,13 @@ A small go module to serve a Gemini server.
 package main
 
 import (
-	"flag"
-	"log"
-
 	"github.com/CPunch/gemini"
 )
 
-func handleIndex(peer *gemini.GeminiPeer) {
-	body := gemini.NewBody()
-	body.AddLinkLine("/hi", "click me!")
-	peer.SendBody(body)
-}
-
-func handleHi(peer *gemini.GeminiPeer) {
-	body := gemini.NewBody()
-	body.AddHeader("Stay Tuned!")
-	peer.SendBody(body)
-}
-
 func main() {
-	// get command line flags
-	port := flag.String("port", "1965", "listening port")
-	certFile := flag.String("cert", "cert.pem", "certificate PEM file")
-	keyFile := flag.String("key", "key.pem", "key PEM file")
-	flag.Parse()
+	response, _ := gemini.LazyRequest("gemini://gemini.circumlunar.space/docs/specification.gmi")
 
-	// create server
-	server, err := gemini.NewServer(*port, *certFile, *keyFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// create path handler
-	pHndler := gemini.NewHandler()
-	pHndler.AddHandler("/", handleIndex)
-	pHndler.AddHandler("/hi", handleHi)
-	server.Run(pHndler.HandlePeer)
+	println(response)
 }
 ```
-> More examples can be found in the `/examples` directory
+> More examples (including servers!) can be found in the `/examples` directory

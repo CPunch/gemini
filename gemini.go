@@ -8,6 +8,7 @@ package gemini
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/url"
@@ -43,7 +44,57 @@ type GeminiServer struct {
 	listenSock net.Listener
 }
 
-/* ======================================[[ geminiPeer ]]======================================= */
+type GeminiRequest struct {
+	sock           *tls.Conn
+	responseHeader string
+	responseBody   string
+}
+
+/* ===================================[[ Helper Functions ]]==================================== */
+
+// (can panic !)
+func ParseURL(rawUrl string) (uri, hostname, path, param string) {
+	// clean url, parse out the uri
+	if i := strings.Index(rawUrl, "://"); i != -1 {
+		uri = rawUrl[:i+3]  // eg. "gemini://"
+		path = rawUrl[i+3:] // eg. "localhost/path/index.gmi"
+	} else {
+		uri = "gemini://"
+		path = rawUrl
+	}
+
+	// split path into hostname and path
+	if i := strings.Index(path, "/"); i != -1 {
+		hostname = path[:i]
+		path = path[i:]
+	} else {
+		hostname = path
+		path = "/"
+	}
+
+	// grab parameter (if exists)
+	if i := strings.Index(rawUrl, "?"); i != -1 {
+		// decode param
+		tparam, err := url.QueryUnescape(rawUrl[i+1:])
+		if err != nil {
+			panic("failed to decode param!")
+		}
+
+		// decode path
+		tpath, err := url.PathUnescape(rawUrl[:i])
+		if err != nil {
+			panic("failed to decode path!")
+		}
+
+		// set
+		param = tparam
+		path = tpath
+	}
+
+	return
+}
+
+/* ======================================[[ GeminiPeer ]]======================================= */
 
 func (server *GeminiServer) newPeer(sock net.Conn) *GeminiPeer {
 	return &GeminiPeer{server: server, sock: sock}
@@ -58,10 +109,18 @@ func (peer *GeminiPeer) Kill() {
 	peer.sock.Close()
 }
 
-func (peer *GeminiPeer) Read(p []byte) (int, error) {
-	return peer.sock.Read(p)
+// returns number of bytes read into p (can panic!)
+func (peer *GeminiPeer) Read(p []byte) int {
+	sz, err := peer.sock.Read(p)
+
+	if err != nil {
+		panic(err)
+	}
+
+	return sz
 }
 
+// writes bytes to tls connection (can panic !)
 func (peer *GeminiPeer) Write(p []byte) {
 	written := 0
 
@@ -86,9 +145,11 @@ func (peer *GeminiPeer) readRequest() {
 
 	// requests absolute url cannot be longer than 1024 bytes + <CR><LF> (2 bytes)
 	for length < 1026 {
-		sz, err := peer.Read(buf[length:])
-		if err != nil {
-			panic(err)
+		sz := peer.Read(buf[length:])
+
+		// socket hangup (missing <CR><LF>)
+		if sz == 0 {
+			panic("malformed gemini request!")
 		}
 
 		length += sz
@@ -101,42 +162,8 @@ func (peer *GeminiPeer) readRequest() {
 	// -2 to remove the <CR><LF>
 	peer.rawURL = string(buf[:length-2])
 
-	// clean url, parse out the uri
-	if i := strings.Index(peer.rawURL, "://"); i != -1 {
-		peer.uri = peer.rawURL[:i+3]  // eg. "gemini://"
-		peer.path = peer.rawURL[i+3:] // eg. "localhost/path/index.gmi"
-	} else {
-		peer.uri = "gemini://"
-		peer.path = peer.rawURL
-	}
-
-	// split path into hostname and path
-	if i := strings.Index(peer.path, "/"); i != -1 {
-		peer.hostname = peer.path[:i]
-		peer.path = peer.path[i:]
-	} else {
-		peer.hostname = peer.path
-		peer.path = "/"
-	}
-
-	// grab parameter (if exists)
-	if i := strings.Index(peer.rawURL, "?"); i != -1 {
-		// decode param
-		param, err := url.QueryUnescape(peer.rawURL[i+1:])
-		if err != nil {
-			panic("failed to decode param!")
-		}
-
-		// decode path
-		path, err := url.PathUnescape(peer.rawURL[:i])
-		if err != nil {
-			panic("failed to decode path!")
-		}
-
-		// set
-		peer.param = param
-		peer.path = path
-	}
+	// parse url
+	peer.uri, peer.hostname, peer.path, peer.param = ParseURL(peer.rawURL)
 }
 
 func (peer *GeminiPeer) sendHeader(status int, meta string) {
@@ -155,22 +182,154 @@ func (peer *GeminiPeer) GetParam() (string, bool) {
 	return peer.param, strings.Compare(peer.param, "") != 0
 }
 
-// meta is the text that is prompted for the user
+// meta is the text that is prompted for the user (can panic !)
 func (peer *GeminiPeer) SendInput(meta string) {
 	peer.sendHeader(StatusInput, meta)
 }
 
-// meta is the text that is reported to the user
+// meta is the text that is reported to the user (can panic !)
 func (peer *GeminiPeer) SendError(meta string) {
 	peer.sendHeader(StatusTemporaryFailure, meta)
 }
 
+// sends a StatusSuccess response header and the body (can panic !)
 func (peer *GeminiPeer) SendBody(body *GeminiBody) {
 	peer.sendHeader(StatusSuccess, "text/gemini")
 	peer.Write([]byte(body.buf))
 }
 
-/* =====================================[[ geminiServer ]]====================================== */
+/* =====================================[[ GeminiRequest ]]===================================== */
+
+// make a gemini request
+func NewRequest(uri, hostname, port, path, param string) (req *GeminiRequest, err error) {
+	config := tls.Config{
+		ServerName:         hostname,
+		InsecureSkipVerify: true,
+	}
+
+	// open tcp connection to gemini server
+	conn, err := net.Dial("tcp", hostname+":"+port)
+	if err != nil {
+		return nil, err
+	}
+
+	// start tls handshake
+	tlsConn := tls.Client(conn, &config)
+	req = &GeminiRequest{sock: tlsConn}
+
+	// error catching (for errors thrown from .Write() or .ReadHeaders())
+	defer func() {
+		// if someone threw a panic make sure we let the caller know
+		if r, ok := recover().(error); ok {
+			err = r
+			req = nil
+		}
+	}()
+
+	// write request
+	req.Write([]byte(fmt.Sprintf("%s%s%s", uri, hostname, path)))
+
+	// write parameter (if exists)
+	if len(param) > 0 {
+		req.Write([]byte(fmt.Sprintf("?%s", param)))
+	}
+
+	// write request terminator
+	req.Write([]byte("\r\n"))
+
+	// TODO: check if request is > 1026
+
+	// read response headers
+	req.readHeaders()
+
+	// read body (TODO: if status is StatusSuccess "20")
+	req.readBody()
+
+	// success!
+	return req, nil
+}
+
+func LazyRequest(url string) (result string, err error) {
+	uri, hostname, path, param := ParseURL(url)
+	req, err := NewRequest(uri, hostname, "1965", path, param)
+	if err != nil {
+		return "", err
+	}
+
+	return req.responseBody, nil
+}
+
+// simple wrapper to write raw data over the tls connection (can panic !)
+func (req *GeminiRequest) Write(p []byte) {
+	written := 0
+
+	for written < len(p) {
+		sz, err := req.sock.Write(p[written:])
+		if err != nil {
+			panic(err)
+		}
+
+		// if sz is 0, it means the socket has closed
+		if sz == 0 {
+			panic("premature socket hangup!")
+		}
+
+		written += sz
+	}
+}
+
+// simple wrapper to read raw data over the tls connection
+func (req *GeminiRequest) Read(p []byte) int {
+	sz, err := req.sock.Read(p)
+
+	// ignore EOF
+	if err != nil && err != io.EOF {
+		panic(fmt.Errorf("Read: %s", err))
+	}
+
+	return sz
+}
+
+// reads gemini response header (can panic !)
+func (req *GeminiRequest) readHeaders() {
+	buf := make([]byte, 1029)
+	var length int = 0
+
+	// response headers cannot be longer than status (2 bytes) + space (1 byte) + meta (1024 bytes max) + <CR><LF> (2 bytes)
+	for length < 1029 {
+		sz := req.Read(buf[length:])
+		// socket hangup (missing <CR><LF>)
+		if sz == 0 {
+			panic("malformed gemini response!")
+		}
+
+		length += sz
+		// response headers end with a <CR><LF>
+		if length > 2 && buf[length-2] == '\r' && buf[length-1] == '\n' {
+			break
+		}
+	}
+
+	// save response header
+	req.responseHeader = string(buf[:length-2])
+	fmt.Printf("[REQ] %s", req.responseHeader)
+}
+
+// reads gemini response body (can panic!)
+func (req *GeminiRequest) readBody() {
+	buf := make([]byte, 1028)
+	sz := 1
+
+	// socket hangup marks the end of the response body (and exit condition)
+	for sz != 0 {
+		sz = req.Read(buf)
+
+		// append read data into body
+		req.responseBody += string(buf[0:])
+	}
+}
+
+/* =====================================[[ GeminiServer ]]====================================== */
 
 func NewServer(port, certFile, keyFile string) (*GeminiServer, error) {
 	// load key pair && create config
