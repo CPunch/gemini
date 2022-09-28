@@ -312,7 +312,6 @@ func (req *GeminiRequest) readHeaders() {
 
 	// save response header
 	req.responseHeader = string(buf[:length-2])
-	fmt.Printf("[REQ] %s", req.responseHeader)
 }
 
 // reads gemini response body (can panic!)
