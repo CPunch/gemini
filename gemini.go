@@ -283,7 +283,11 @@ func (req *GeminiRequest) Read(p []byte) int {
 	sz, err := req.sock.Read(p)
 
 	// ignore EOF
-	if err != nil && err != io.EOF {
+	if err == io.EOF {
+		return 0
+	}
+
+	if err != nil {
 		panic(fmt.Errorf("Read: %s", err))
 	}
 

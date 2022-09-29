@@ -21,3 +21,7 @@ func (body *GeminiBody) AddTextLine(str string) {
 func (body *GeminiBody) AddLinkLine(url, text string) {
 	body.buf += fmt.Sprintf("=> %s %s\n\n", url, text)
 }
+
+func (body *GeminiBody) AddRaw(data string) {
+	body.buf += data
+}
